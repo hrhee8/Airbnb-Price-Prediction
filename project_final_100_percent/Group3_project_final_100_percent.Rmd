@@ -1,0 +1,637 @@
+---
+title: "Exploring Airbnb in New York City before COVID-19"
+output: 
+  html_document: 
+    toc: yes
+date: '08/07/2020'
+author: "Hyunjoon Rhee (NetID: hrhee8)"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+## What is this topic?
+
+This dataset include information of Airbnb in New York city. This dataset can be divided mainly into five groups.
+
+It includes host information, including the host id and its name. It has shown the location of the accommodation based on cities and specific areas with latitude and longitude. 
+
+We can predict customers’ preferences based on space type, price, and amount of days that they are willing to stay. With the number of reviews and recent review date, we can also predict their experience at the accommodations. 
+
+Lastly, the availability of accommodation will be listed with the amount of listing per host and the number of days when it is available for booking.
+
+## Where did it come from?
+
+To make accurate predictions, we included observations from many reliable sources with credible values. This dataset is found on the website, [Kaggle](https://www.kaggle.com/dgomonov/new-york-city-airbnb-open-data). Since this dataset includes variables from all kinds of perspectives, it indicates how active Airbnb market is in New York city. The original source of this public dataset can be found on the [Airbnb Website](http://insideairbnb.com/).
+
+## What are the variables?
+
+```{r, include = FALSE}
+airbnbdata = read.csv("AB_NYC_2019.csv")
+sapply(airbnbdata, typeof)
+```
+
+```{r, echo=FALSE}
+library(knitr)
+
+variable = c("id", "name", "host_id", "host_name", "neighbourhood_group", "neighbourhood", "latitude", "longitude", "room_type", "price", "minimum_nights", "number_of_reviews", "last_review","reviews_per_month", "calculated_host_listings_count", "availability_365")
+
+types = c("Integer", "Character", "Integer", "Character", "Character", "Character", "Double", "Double", "Character", "Integer", "Integer", "Integer", "Character", "Double", "Integer", "Integer")
+
+descriptions = c('ID', 'Name of the listing', 'Host ID', 'Name of the host', 'Location', 'Area', 'Latitude coordinates', 'Longitude coordinates', 'Listing space type', 'Price in dollars', 'Amount of nights minimum', 'Number of reviews', 'Latest review', 'Number of reviews per month', 'Amount of listing per host', 'Number of days when listing is available for booking')
+
+kable(data.frame(Variable=variable, Type=types, Description=descriptions))
+```
+
+## Why is it interesting to us?
+
+The year 2020 has been different from any other years due to the impact of COVID-19 pandemic. Due to the pandemic, there has been a huge crisis on travel, hotel and airbnb industry. This crisis caused fear to majority of the people. People are scared of traveling or even stepping one step outside of house. Moreover, the government regulation of traveling, by closing majority of the stores and preventing international travel significantly affected the usage of airbnb or hotels.
+
+Many businesses in different locations got negative impact, including the Airbnb - an American vacation rental business. As other cities, one of the most populated cities, New York, wasn't exception. New York has became a much more quiet city than before. 
+
+As this situation is still going on and unpredictable, our interest came from our desire to travel around. Plus, just like us, there are lots of people who are seeking freedom of traveling due to such special circumstances. Wishing the situation gets better, our team has broke down the data to analyze the relationship between the price and other factors.
+
+## Why are we creating a model for this data? What is the goal of this model?
+
+Since the dataset has more than 2500 observations, it is hard to read the result of data without a model. The regression model allow us to use the relationships between price and other variables to make predictions. Among the models, we will choose the best look model to show which variable has the most interactive with the response, price.
+
+
+# Methods
+
+## Data Cleaning
+
+We have started with takeoff NA from the dataset.
+
+```{r}
+airbnbdata = read.csv("AB_NYC_2019.csv")
+airbnbdata[airbnbdata==0] <- NA
+airbnbdata <- na.omit(airbnbdata)
+head(airbnbdata)
+```
+
+### Split data into Train & Test set
+
+We have split the data into the training set and testing set. We used a training set to find an optimal model. We have predicted price by using the optimal model we have chosen from the training set. We will compare the actual price and predicted price.
+
+```{r}
+bnb_trn_idx  = sample(nrow(airbnbdata), size = trunc(0.80 * nrow(airbnbdata)))
+bnb_trn_data = airbnbdata[bnb_trn_idx, ]
+bnb_tst_data = airbnbdata[-bnb_trn_idx, ]
+bnb_trn_data <- na.omit(bnb_trn_data)
+bnb_tst_data <- na.omit(bnb_tst_data)
+```
+
+### Remove Outlier
+
+To get accurate statistical results, we have removed the outlier. We used the formula $Q_1 - 1.5*IQR$ for the lower outlier and $Q_3 + 1.5*IQR$ for the upper outlier.
+
+```{r}
+iqr = IQR(bnb_trn_data$price,na.rm = TRUE)
+quart = quantile(bnb_trn_data$price, c(0.25, 0.5, 0.75), type = 1)
+upperoutlier = quart[3] + 1.5*iqr[1]
+loweroutlier = quart[1]-1.5*iqr[1]
+c(upperoutlier,loweroutlier)
+rowtoremove1 = c(which(bnb_trn_data$price > upperoutlier))
+rowtoremove2 = c(which(bnb_trn_data$price < loweroutlier))
+bnb_trn_data_new <- bnb_trn_data[-rowtoremove1,]
+```
+
+## Considering Variables
+
+To make a decision for which variable to consider, we have plotted the correlation matrix. And, we have chosen the highest five correlations which are close to 1 or -1 (absolute value close to 1).
+
+```{r}
+bnb_trn_data_new$neighbourhood_group = as.factor(bnb_trn_data_new$neighbourhood_group)
+bnb_trn_data_new$neighbourhood_group = as.numeric(bnb_trn_data_new$neighbourhood_group)
+bnb_trn_data_new$room_type = as.factor(bnb_trn_data_new$room_type)
+bnb_trn_data_new$room_type = as.numeric(bnb_trn_data_new$room_type)
+```
+```{r}
+bnb_trn_data_new <- subset(bnb_trn_data_new, select = -c(name,host_name,neighbourhood,last_review))
+str(bnb_trn_data_new)
+```
+
+## Correlation matrix
+
+```{r}
+library(ggcorrplot)
+correlation <- cor(bnb_trn_data_new)
+correlation2 <- round(cor(correlation,use="complete.obs"), 2)
+options(repr.plot.width=12, repr.plot.height=12)
+ggcorrplot(correlation2, lab = TRUE, colors = c("orange", "white", "blue"), show.legend = F, outline.color = "black", type = "upper", tl.cex = 7, lab_size = 3, sig.level = .2, title = "Correlation Plot")
+```
+
+According to correlation matrix, correlation between price and room_type, longitude, calculated_host_listings_count, reviews_per_month, and minimum_nights are -0.9, -0.59, 0.31, -0.2, 0.12 respectively.
+
+## Model Comparison 
+
+### 3 Variables
+
+```{r}
+model1 = lm(price ~ room_type, data = bnb_trn_data_new)
+model2 = lm(price ~ room_type + calculated_host_listings_count, data = bnb_trn_data_new)
+anova(model1, model2)
+```
+
+- $H_0$: $\beta_2$ (calculated_host_listings_count) = 0 
+- $H_1$: $\beta_2$ (calculated_host_listings_count) != 0
+- Test statistic: 261.63
+- p-value: 2.2e-16
+- Decision on $\alpha$ = 0.10 : Reject H0, select model2
+- We started with simple regresson model that has room_type as a predictor of price and did ANOVA testing to compare this model with additive model that has room_type and calculated_host_listings_count as predictors. As a result, we reject $H_0$ and select model2 among those two models.
+
+```{r}
+model3 = lm(price ~ room_type + longitude, data = bnb_trn_data_new)
+anova(model1, model3)
+```
+
+- $H_0$: $\beta_2$ (longtitude)  = 0 
+- $H_1$: $\beta_2$ (longitude) != 0
+- Test statistic: 1543.8
+- p-value: 2.2e-16
+- Decision on $\alpha$ = 0.1: Reject H0, select model3
+- Similarily, we compared the simple regression model (model1) with the additive model that has room_type and longitude as predictors. As a result, again we reject $H_0$ and select model3 among model1 and model3.
+
+
+```{r}
+modelvar3 = lm(price ~ room_type + calculated_host_listings_count+ longitude, data = bnb_trn_data_new)
+anova(model2, modelvar3)
+```
+
+- $H_0$: $\beta_3$ (longitude) = 0 
+- $H_1$: $\beta_3$ (longitude) != 0
+- Test statistic:  1443.7
+- p-value: 2.2e-16
+- Decision on $\alpha$ = 0.1: Reject H0, select modelvar3
+- Lastly, we compared the model that has predictors of room_type and calculated_host_listings_count and the model with 3 predictors, room_type, calculated_host_listings_count, AND longitude. After performing ANOVA, we reject the null hypothesis and chose the model with three predictors.
+
+### AIC and Log Transformation
+
+```{r}
+var3original = lm(price ~ 1, data = bnb_trn_data_new)
+var3_aic = step(var3original, scope = price ~ room_type * calculated_host_listings_count * longitude, direction = "both")
+par(mfrow=c(2,2))
+plot(var3_aic, pch = 20)
+```
+
+- In order to check if interaction between three variables (room_type, calculated_host_listings_count, and longitude) makes a better model for price prediction, we peformed AIC search with both direction and scoped it to three-way interaction. 
+
+```{r}
+var3_aic_log = lm(log(price) ~ room_type + longitude + calculated_host_listings_count + 
+    room_type:longitude + room_type:calculated_host_listings_count + 
+    longitude:calculated_host_listings_count, data = bnb_trn_data_new)
+par(mfrow=c(2,2))
+plot(var3_aic_log,pch=20)
+```
+
+- Then we performed a log transformation on the response variable (price) to make the data more linear and normal. However, we observed that it would be better to consider another model by performing another log transformation on one of the predictor variable: calculated_host_listings_count.
+
+
+```{r}
+var3_aic_log2 = lm(log(price) ~ room_type + longitude + log(calculated_host_listings_count) +
+    room_type:longitude + room_type:calculated_host_listings_count + 
+    longitude:calculated_host_listings_count, data = bnb_trn_data_new)
+par(mfrow=c(2,2))
+plot(var3_aic_log2, pch = 20)
+```
+
+- We have concluded that transformation of log(calculated_host_listings_count) does not bring much difference to the original data.
+
+
+```{r}
+var3predict = data.frame(room_type = 2, calculated_host_listings_count = 1, longitude = -73.95725)
+exp(predict(var3_aic_log,newdata=var3predict))
+```
+
+- We randomly selected one data point from the dataset, the one with room_type = 2(Private room), calculated_host_listings_count = 1, and longitude = -73.95725, and used the first log transformation model to predict the price. As a result, the prediction was a bit far from the actual price ($60).
+
+### Simulation (3 Variables)
+```{r}
+num_samples = nrow(bnb_trn_data_new)
+var3predictionresult = rep(0, num_samples)
+
+for (i in 1:num_samples) {
+  room_type_val = sample(1:3,1)
+  calculated_host_listings_count_value = sample(1:max(bnb_trn_data_new$calculated_host_listings_count),1)
+  longitude_value = runif(1,min(bnb_trn_data_new$longitude), max(bnb_trn_data_new$longitude))
+  
+  var3prediction = data.frame(room_type = room_type_val, calculated_host_listings_count = calculated_host_listings_count_value, longitude = longitude_value)
+  var3predictionresult[i] = exp(predict(var3_aic_log,newdata=var3prediction))
+}
+#var3predictionresult
+```
+
+```{r}
+var3predictvsactual = data.frame(var3pr = var3predictionresult, var3ac = bnb_trn_data_new$price)
+ggplot(var3predictvsactual) + geom_point(aes(x = var3pr, y = var3ac), pch=20) + geom_abline(intercept = 0, slope = 1) + xlim(0,350) + ylim(0,350)
+```
+
+- Also, we performed simulation of predicting the price of actual data with the log transformation model with three variables, and figured out that there is almost no correlation between our selected model and the actual data. In other words, the selected model was not optimal to predict the price. Therefore, we decided to add two more variables and do the same process again to find a better model.
+
+### 5 Variables
+
+```{r}
+model5 = lm(price ~ room_type + calculated_host_listings_count+ longitude + minimum_nights, data = bnb_trn_data_new)
+anova(modelvar3,model5)
+```
+
+- $H_0$: $\beta_4$ (minimum_nights)  = 0 
+- $H_1$: $\beta_4$ (minimum_nights) != 0
+- Test statistic: 130.77
+- p-value: 2.2e-16
+- Decision on $\alpha$ = 0.1: Reject H0, select model5
+- We performed the ANOVA test to test whether adding predictor minimum_nights would make a better model to predict the price. The result shows significantly small p-value, so that we reject $H_0$ and select model5.
+
+```{r}
+modelvar5 = lm(price ~ room_type + calculated_host_listings_count+ longitude + minimum_nights + reviews_per_month, data = bnb_trn_data_new)
+anova(model5,modelvar5)
+```
+
+- $H_0$: $\beta_5$ (reviews_per_month)  = 0 
+- $H_1$: $\beta_5$ (reviews_per_month) != 0
+- Test statistic: 25.122
+- p-value: 5.428e-07
+- Decision on $\alpha$ = 0.1: Reject H0, select modelvar5
+- Again, we performed the ANOVA test to test whether adding predictor reviews_per_month would make a better model to predict the price. The result shows significantly small p-value, so that we reject $H_0$ and select model with 5 predicting variables.
+
+### AIC and Log Transformation
+
+```{r}
+var5original = lm(price ~ 1, data = bnb_trn_data_new)
+var5_aic = step(var5original, scope = price ~ room_type * calculated_host_listings_count * longitude * minimum_nights * reviews_per_month, direction = "both", trace=FALSE)
+coef(var5_aic)
+```
+```{r}
+var5_aic_log = lm(log(price) ~ room_type + longitude + calculated_host_listings_count + minimum_nights + reviews_per_month + room_type:longitude + longitude:minimum_nights + calculated_host_listings_count:minimum_nights + longitude:reviews_per_month + calculated_host_listings_count:reviews_per_month + minimum_nights:reviews_per_month 
++ calculated_host_listings_count:minimum_nights:reviews_per_month 
+, data = bnb_trn_data_new)
+par(mfrow=c(2,2))
+plot(var5_aic_log, pch = 20)
+```
+
+- In order to improve our model with 5 variables, we peformed AIC search with both direction and scoped it to the interaction between 5 predictors. Then, similar to what we did on 3 variables model, we performed a log transformation on the response variable (price). As a result, we got a new model that would predict the price better than the additive model with 5 predictors. 
+
+```{r}
+var5predict = data.frame(room_type = 2, calculated_host_listings_count = 1, longitude = -73.8765,minimum_nights = 1, reviews_per_month = 0.57)
+exp(predict(var5_aic_log,newdata=var5predict))
+```
+
+- Once again, we randomly selected one data point from the dataset, the one with room_type = 2(Private room), calculated_host_listings_count = 1, longitude = -73.95725, minimum_nights = 1, and reviews_per_month = 0.57 (the same data point we used for prediction with 3 variable aic model) and used the log transformation aic model of 5 variables to predict the price. As a result, the prediction (65.34578) is closer to the actual price($60) than the prediction with aic model of 3 variables.
+
+#### Simulation (5 Variables)
+
+```{r}
+num_samples = nrow(bnb_trn_data_new)
+var5predictionresult = rep(0, num_samples)
+
+for (i in 1:num_samples) {
+  room_type_val = sample(1:3,1)
+  calculated_host_listings_count_value = sample(1:max(bnb_trn_data_new$calculated_host_listings_count),1)
+  longitude_value = round(runif(1,min(bnb_trn_data_new$longitude), max(bnb_trn_data_new$longitude)),5)
+  minimum_nights_value = sample(1:40,1)
+  reviews_per_month_value = round(runif(1,min(bnb_trn_data_new$reviews_per_month),20),2)
+  
+  prediction_train = data.frame(room_type = room_type_val, calculated_host_listings_count = calculated_host_listings_count_value, longitude = longitude_value, minimum_nights = minimum_nights_value, reviews_per_month = reviews_per_month_value)
+  var5predictionresult[i] = exp(predict(var5_aic_log,newdata=prediction_train))
+} 
+#var5predictionresult
+```
+```{r}
+var5predictvsactual = data.frame(var5pr = var5predictionresult, var5ac = bnb_trn_data_new$price)
+```
+
+```{r}
+ggplot(var5predictvsactual) + geom_point(aes(x = var5pr, y = var5ac), pch=20) + geom_abline(intercept = 0, slope = 1) + xlim(0,350) + ylim(0,350)
+```
+
+- Again, we performed simulation of predicting the price of actual data with the log transformation model with five variables, and figured out that there is a slightly higher correlation between our selected model and the actual data. In other words, the new selected model seems to better than the selected model with 3 variables.
+
+```{r}
+anova(var3_aic_log,var5_aic_log)
+```
+
+### Predicted vs Actual
+
+```{r}
+par(mfrow=c(1,2))
+plot(exp(predict(var5_aic_log)), bnb_trn_data_new$price, pch = 20)
+plot(exp(predict(var3_aic_log)), bnb_trn_data_new$price, pch = 20)
+```
+
+- In order to decide which model is actually better to predict the price between log transformed aic model with 3 variables and log transformed aic model with 5 variables, we performed ANOVA test again and plotted each model with the actual data. Since the p-value is signifcantly small and log aic model with 5 variable has the smaller RSS (3146.1) than another one (RSS: 3180.4), we choose the log aic model with 5 variables is better than the one with 3 variables.
+
+```{r}
+var5_fit_model = lm(var5pr~var5ac,data=var5predictvsactual)
+plot(fitted(var5_fit_model), resid(var5_fit_model), col = "orange", pch = 20,
+     xlab = "Fitted", ylab = "Residuals", main = "Fitted vs Residual")
+abline(h = 0, col = "blue", lwd = 2)
+```
+
+- This fitted vs residuals plot of log aic model with 5 variables suggests that the model has constant variance and linearity.
+
+
+```{r}
+rmse = function(actual, predicted) {
+  sqrt(mean((actual - predicted) ^ 2))
+}
+```
+
+```{r}
+rmse(exp(predict(var5_aic_log)), bnb_trn_data_new$price)
+```
+
+- The RMSE between the actual data and our selected model is not large.
+
+
+# Result 
+## testing
+
+After finding the best fitting model for the training data, we want to verify if our model correctly predicts the value from the testing data as well. The reason behind this check up is to see the difference in value of our prediction and the actual value. The level of difference tells us how close our model was, in terms of finding out the relationship among variables and response.
+
+First step, we had to modify our data same as we did for the training dataset. We have removed the outliers for the testing data.
+
+```{r}
+iqr_tst = IQR(bnb_tst_data$price,na.rm = TRUE)
+iqr_tst
+quart_tst = quantile(bnb_tst_data$price, c(0.25, 0.5, 0.75), type = 1)
+upperoutlier_tst = quart[3] + 1.5*iqr[1]
+loweroutlier_tst = quart[1]-1.5*iqr[1]
+c(upperoutlier_tst,loweroutlier_tst)
+rowtoremove1_tst = c(which(bnb_tst_data$price > upperoutlier))
+rowtoremove2_tst = c(which(bnb_tst_data$price < loweroutlier))
+bnb_tst_data_new <- bnb_tst_data[-rowtoremove1_tst,]
+nrow(bnb_tst_data_new)
+```
+
+Next, same as before, we have first turned the neighbourhood_group and room_type characters into factors then into numeric values so that we could use them as numbers to calculate in the future. Plus, setup a model for testing equal to the model from the training.
+
+```{r}
+bnb_tst_data_new$neighbourhood_group = as.factor(bnb_tst_data_new$neighbourhood_group)
+bnb_tst_data_new$neighbourhood_group = as.numeric(bnb_tst_data_new$neighbourhood_group)
+bnb_tst_data_new$room_type = as.factor(bnb_tst_data_new$room_type)
+bnb_tst_data_new$room_type = as.numeric(bnb_tst_data_new$room_type)
+```
+
+### 5 variable model 
+
+```{r}
+var5_aic_log_tst = lm(log(price) ~ room_type + longitude + calculated_host_listings_count + minimum_nights + reviews_per_month + room_type:longitude + longitude:minimum_nights + calculated_host_listings_count:minimum_nights + longitude:reviews_per_month + calculated_host_listings_count:reviews_per_month + minimum_nights:reviews_per_month 
++ calculated_host_listings_count:minimum_nights:reviews_per_month 
+, data = bnb_tst_data_new)
+```
+
+
+### Simulation
+
+With a model above, simulate and predict the values and store the values.
+
+```{r}
+num_samples_tst = nrow(bnb_tst_data_new)
+var5predictionresult_tst = rep(0, num_samples_tst)
+
+for (i in 1:num_samples_tst) {
+  room_type_val_tst = sample(1:3,1)
+  calculated_host_listings_count_value_tst = sample(1:max(bnb_tst_data_new$calculated_host_listings_count),1)
+  longitude_value_tst = round(runif(1,min(bnb_tst_data_new$longitude), max(bnb_tst_data_new$longitude)),5)
+  minimum_nights_value_tst = sample(1:40,1)
+  reviews_per_month_value_tst = round(runif(1,min(bnb_tst_data_new$reviews_per_month),20),2)
+  
+  prediction_tst = data.frame(room_type = room_type_val_tst, calculated_host_listings_count = calculated_host_listings_count_value_tst, longitude = longitude_value_tst, minimum_nights = minimum_nights_value_tst, reviews_per_month = reviews_per_month_value_tst)
+  var5predictionresult_tst[i] = exp(predict(var5_aic_log_tst,newdata=prediction_tst))
+} 
+#var5predictionresult_tst
+```
+
+After predicting the values, we used these values to compare with the actual values of the price. We wanted to see the linear relationship of predicted and actual when we plotted. Therefore, we have additionally plotted 'Fitted vs Residual' graph to check the linearity of predicted and actual.
+
+
+### Prediction vs Actual
+
+```{r}
+var5predictvsactual_tst = data.frame(pred_tst = var5predictionresult_tst, act_tst = bnb_tst_data_new$price)
+```
+
+```{r}
+ggplot(var5predictvsactual_tst) + geom_point(aes(x = pred_tst, y = act_tst), pch=20) + geom_abline(intercept = 0, slope = 1) + xlim(0,350) + ylim(0,350)
+```
+
+```{r}
+plot(exp(predict(var5_aic_log_tst)), bnb_tst_data_new$price, pch = 20,ylim=c(0,1000))
+```
+
+```{r}
+var5_fit_model_tst = lm(pred_tst~act_tst,data=var5predictvsactual_tst)
+plot(fitted(var5_fit_model_tst), resid(var5_fit_model_tst), col = "orange", pch = 20,
+     xlab = "Fitted", ylab = "Residuals", main = "Fitted vs Residual",ylim=c(-100,300))
+abline(h = 0, col = "blue", lwd = 2)
+```
+
+Considering two graphs - predicted value vs actual value and fitted vs residual - our team has though there might be a chance of these graphs showing linearity with a slope close to one in predicted vs actual value graph. Since it was hard to find the relationship just by looking at the first graph, our team has decided to examine the fitted vs residual plot.
+
+The fitted vs residual graph shows little noise in the graph. However, it is hard to say that the graph is showing certain trend other than a straight line with $y = 0$. We could say that this graph shows that there might be a linear relationship between the predicted and actual value.
+These two graphs shows that our model, that we have found out through numerous model diagnostic methods, might be accurate enough to make prediction of the price based on the data.
+
+
+Our team has successfully tested out, which model fits the best, considering numerous variables. The model that we have used was $log(price) = roomtype + longitude + hostlistings + minimumnights + reviewspermonth + roomtype:longitude + longitude:minimumnights + hostlistings:minimumnights + longitude:reviewspermonth + hostlistings:reviewspermonth + minimumnights:reviewspermonth + hostlistings:minimumnights:reviewspermonth$. 
+
+This model was able to predict the price points with some noise of error in the value. The usage of anova, log transformation, linearity testing led our team to approach this model, like mentioned in method. 
+
+However, the process of ending up with this model was not easy at the first place. Our team had an initial thought of thinking 3 variables would be enough to explain the complexity of the relationship of variables and price. But, after plotting the model with 3 variables, we have decided 3 variables were not enough. We had to test out other variables again, and reduce the error between value of predicted and actual price point of airbnb.
+
+We believe that someday, this COVID-19 pandemic will disappear and airbnb will be back in business like it was before this moment. We were able to figure out that room type, longitude, host listings number, minimum nights, reviews per month influenced the price point of airbnb. Considering the geographical location of neighborhoods, size of the house, the correlation among the variables and price, might come as a easy connected dots. The relationship of price and such variables will be discussed below.
+
+# Discussion
+
+```{r}
+mean(airbnbdata$price[airbnbdata$room_type == "Entire home/apt"])
+mean(airbnbdata$price[airbnbdata$room_type == "Private room"])
+mean(airbnbdata$price[airbnbdata$room_type == "Shared room"])
+```
+
+The correlation between room_type and price is -0.9.
+The number above shows that the average price of Entire home/apt is the greatest, Private Room, being the next, and Shared Room for the last. The correlation shows that the price is negatively related to Room type. We have made the room type into factors, then turned it into numerics. Entire home/apt$= 1$, Private Room$= 2$, Shared Room$= 3$.
+
+
+```{r}
+t = data.frame(name = c("Bronx","Brooklyn","Manhattan","Queens","Staten Island"), min = c(min(airbnbdata$longitude[airbnbdata$neighbourhood_group == "Bronx"]),
+min(airbnbdata$longitude[airbnbdata$neighbourhood_group == "Brooklyn"]),
+min(airbnbdata$longitude[airbnbdata$neighbourhood_group == "Manhattan"]),
+min(airbnbdata$longitude[airbnbdata$neighbourhood_group == "Queens"]),
+min(airbnbdata$longitude[airbnbdata$neighbourhood_group == "Staten Island"])), max =
+c(max(airbnbdata$longitude[airbnbdata$neighbourhood_group == "Bronx"]),
+max(airbnbdata$longitude[airbnbdata$neighbourhood_group == "Brooklyn"]),
+max(airbnbdata$longitude[airbnbdata$neighbourhood_group == "Manhattan"]),
+max(airbnbdata$longitude[airbnbdata$neighbourhood_group == "Queens"]),
+max(airbnbdata$longitude[airbnbdata$neighbourhood_group == "Staten Island"])), 
+price = c(mean(airbnbdata$price[airbnbdata$neighbourhood_group == "Bronx"]),
+mean(airbnbdata$price[airbnbdata$neighbourhood_group == "Brooklyn"]),
+mean(airbnbdata$price[airbnbdata$neighbourhood_group == "Manhattan"]),
+mean(airbnbdata$price[airbnbdata$neighbourhood_group == "Queens"]),
+mean(airbnbdata$price[airbnbdata$neighbourhood_group == "Staten Island"])))
+t
+```
+
+
+The correlation between longitude and price is -0.59.
+As the values of longitude increase, it means that far away from downtown New York City.
+Therefore, the convenience and the number of tour spots decrease.
+It results in a negative value of the correlation between price and longitude.
+
+
+```{r}
+library(ggplot2)
+
+onewith372 = airbnbdata[airbnbdata$calculated_host_listings_count == 327,]
+ggplot(data = onewith372) + geom_bar(aes(x = neighbourhood_group),position = 'dodge', width = 0.1, fill = "darkgreen")
+
+```
+
+
+
+The correlation between calculated_host_listings_count and price is 0.31.
+As hosts with more numbers of the room have a high possibility of earning higher incomes, the rooms they own have higher possibility of locating near or at the center of the city.
+Therefore, the value of the correlation between the amount of listing per host and price is shown positive.
+
+
+```{r}
+plot(airbnbdata$price ~ airbnbdata$reviews_per_month, pch = 20, col = "dodgerblue")
+```
+
+
+The correlation between reviews_per_month and price is -0.2.
+To have more number of reviews per month, the demand for rooms should be proportional.
+Since people tend to stay cheaper houses, the demand for the high price of Airbnb is lower than the low price of Airbnb.
+It results in the negative value of the correlation between price and reviews per month.
+
+
+```{r}
+plot(airbnbdata$price ~ airbnbdata$minimum_nights, pch = 20, col = "darkorange")
+```
+
+The correlation between minimum_nights and price is 0.12.
+The plot suggests that there is almost no correlation between price and the minimum nights. 
+However, since the correlation coefficient between price and the minimum nights is 0.12, we can predict 
+that increasing minimum nights may imply a few people tend to stay in more expensive rooms.
+
+# Appendix
+
+We used the following statistical methods:
+
+- ANOVA Test 
+
+```{r, eval = FALSE}
+anova(var3_aic_log,var5_aic_log)
+```
+
+This test is to find out p value by comparing two different models, to see the significance of the additional variable.
+
+- Log Transformation
+
+```{r, eval = FALSE}
+var5_aic_log = lm(log(price) ~ room_type + longitude + calculated_host_listings_count + minimum_nights + reviews_per_month + room_type:longitude + longitude:minimum_nights + calculated_host_listings_count:minimum_nights + longitude:reviews_per_month + calculated_host_listings_count:reviews_per_month + minimum_nights:reviews_per_month 
++ calculated_host_listings_count:minimum_nights:reviews_per_month 
+, data = bnb_trn_data_new)
+```
+
+Log Transformation allows the model to express normality of the data.
+
+- AIC Selection
+
+```{r, eval = FALSE}
+var5original = lm(price ~ 1, data = bnb_trn_data_new)
+var5_aic = step(var5original, scope = price ~ room_type * calculated_host_listings_count * longitude * minimum_nights * reviews_per_month, direction = "both", trace=FALSE)
+coef(var5_aic)
+```
+
+AIC selection finds the optimal model to improve linearity of the data.
+
+- Multiple Linear Regression
+
+```{r, eval = FALSE}
+modelvar3 = lm(price ~ room_type + calculated_host_listings_count+ longitude, data = bnb_trn_data_new)
+```
+
+Multiple Linear Regression is used to not only see the relationship of response and a single variable, but also see the dynamic changes of the response due to multiple variables.
+
+- Fitted versus Residuals plot
+
+```{r, eval = FALSE}
+plot(fitted(var5_fit_model), resid(var5_fit_model), col = "orange", pch = 20,
+     xlab = "Fitted", ylab = "Residuals", main = "Fitted vs Residual")
+```
+
+Fitted versus residuals plot shows the linearity and the check the constant variance of the model.
+
+- Outlier removal
+
+```{r, eval = FALSE}
+iqr = IQR(bnb_trn_data$price,na.rm = TRUE)
+quart = quantile(bnb_trn_data$price, c(0.25, 0.5, 0.75), type = 1)
+upperoutlier = quart[3] + 1.5*iqr[1]
+loweroutlier = quart[1]-1.5*iqr[1]
+c(upperoutlier,loweroutlier)
+```
+
+Outlier removal is crucial, because outlier may distort the overall trend of the data.
+
+- Prediction
+
+```{r, eval = FALSE}
+exp(predict(var5_aic_log,newdata=var5predict))
+```
+
+Prediction method was used to predict the price point, given certain condition.
+
+- Simulation
+
+```{r, eval = FALSE}
+for (i in 1:num_samples) {
+  room_type_val = sample(1:3,1)
+  calculated_host_listings_count_value = sample(1:max(bnb_trn_data_new$calculated_host_listings_count),1)
+  longitude_value = round(runif(1,min(bnb_trn_data_new$longitude), max(bnb_trn_data_new$longitude)),5)
+  minimum_nights_value = sample(1:40,1)
+  reviews_per_month_value = round(runif(1,min(bnb_trn_data_new$reviews_per_month),20),2)
+  
+  prediction_train = data.frame(room_type = room_type_val, calculated_host_listings_count = calculated_host_listings_count_value, longitude = longitude_value, minimum_nights = minimum_nights_value, reviews_per_month = reviews_per_month_value)
+  var5predictionresult[i] = exp(predict(var5_aic_log,newdata=prediction_train))
+} 
+```
+
+Simulation method was used to randomly generate conditions, in order to predict the price point and compare them in the future. By randomly generating conditions, it allows us to check if the prediction are well distributed.
+
+- RMSE
+
+```{r, eval = FALSE}
+rmse = function(actual, predicted) {
+  sqrt(mean((actual - predicted) ^ 2))
+}
+```
+
+RMSE shows the level of difference between actual and predicted value.
+
+- Train, Test Data Split
+
+```{r, eval = FALSE}
+bnb_trn_idx  = sample(nrow(airbnbdata), size = trunc(0.80 * nrow(airbnbdata)))
+bnb_trn_data = airbnbdata[bnb_trn_idx, ]
+bnb_tst_data = airbnbdata[-bnb_trn_idx, ]
+bnb_trn_data <- na.omit(bnb_trn_data)
+bnb_tst_data <- na.omit(bnb_tst_data)
+```
+
+Train data is used to find the optimal model before predicting the outcome with the test model.
+
+- Correlation Matrix
+
+```{r, eval = FALSE}
+library(ggcorrplot)
+correlation <- cor(bnb_trn_data_new)
+correlation2 <- round(cor(correlation,use="complete.obs"), 2)
+options(repr.plot.width=12, repr.plot.height=12)
+ggcorrplot(correlation2, lab = TRUE, colors = c("orange", "white", "blue"), show.legend = F, outline.color = "black", type = "upper", tl.cex = 7, lab_size = 3, sig.level = .2, title = "Correlation Plot")
+```
+
+Correlation Matrix is used to see the relationship among the variables of the data. The level of relationship could be ranged from -1 to 1.
